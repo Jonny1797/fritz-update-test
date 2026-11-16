@@ -1,6 +1,6 @@
 [project]
 name = "fritz-callhistory"
-version = "1.0.1"
+dynamic = ["version"]
 description = "Durchsuchbare Anrufliste und Kontakt-Historie für die AVM Fritz!Box"
 readme = "README.md"
 authors = [
@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fritzconnection>=1.15.1",
     "keyring>=25.7.0",
+    "packaging>=24.0",
     "phonenumbers>=9.0.33",
     "platformdirs>=4.10.0",
     "pyside6>=6.11.1",
@@ -20,8 +21,25 @@ dependencies = [
 fritz-callhistory = "fritz_callhistory.app:main"
 
 [build-system]
-requires = ["uv_build>=0.11.26,<0.12.0"]
-build-backend = "uv_build"
+requires = ["setuptools>=77", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+# Die Version kommt ausschließlich aus dem Git-Tag (ADR 0001) - nie hier eintragen.
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fritz_callhistory = ["py.typed", "assets/*", "db/migrations/*.sql"]
+
+[tool.uv]
+# Editable-Install neu bauen, wenn sich Commit oder Tags ändern - sonst bleibt die Version veraltet.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { git = { commit = true, tags = true } },
+]
 
 [dependency-groups]
 dev = [

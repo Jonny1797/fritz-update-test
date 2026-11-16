@@ -4,6 +4,7 @@ PySide6 desktop app that syncs an AVM Fritz!Box's call list (TR-064) into local 
 
 - Package manager: **uv** (`uv run …`; never pip).
 - Language: in-app strings and code comments are **German**; `CHANGELOG.md` entries are **English**.
+- Version comes only from the git tag (setuptools-scm, [ADR 0001](docs/adr/0001-setuptools-scm-for-versioning.md)); **never write a version into `pyproject.toml`**.
 - Every notable feature/fix gets a `CHANGELOG.md` entry under `[Unreleased]` — see [docs/agents/changelog.md](docs/agents/changelog.md).
 
 ## Commands

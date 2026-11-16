@@ -185,11 +185,11 @@ wheels = [
 
 [[package]]
 name = "fritz-callhistory"
-version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "fritzconnection" },
     { name = "keyring" },
+    { name = "packaging" },
     { name = "phonenumbers" },
     { name = "platformdirs" },
     { name = "pyside6" },
@@ -209,6 +209,7 @@ dev = [
 requires-dist = [
     { name = "fritzconnection", specifier = ">=1.15.1" },
     { name = "keyring", specifier = ">=25.7.0" },
+    { name = "packaging", specifier = ">=24.0" },
     { name = "phonenumbers", specifier = ">=9.0.33" },
     { name = "platformdirs", specifier = ">=4.10.0" },
     { name = "pyside6", specifier = ">=6.11.1" },

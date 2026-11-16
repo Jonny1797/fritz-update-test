@@ -7,6 +7,8 @@ Aufruf: uv run pyinstaller packaging/fritz_callhistory.spec
 
 import pathlib
 
+from PyInstaller.utils.hooks import copy_metadata
+
 project_root = pathlib.Path(SPECPATH).resolve().parent  # noqa: F821 (von PyInstaller injiziert)
 src_dir = project_root / "src"
 migrations_dir = src_dir / "fritz_callhistory" / "db" / "migrations"
@@ -18,6 +20,9 @@ datas = [(str(p), "fritz_callhistory/db/migrations") for p in migrations_dir.glo
 # gui/icon.py liest icon.svg zur Laufzeit ebenso über importlib.resources (Fenster-/
 # Tray-Icon) - gleicher Grund wie bei den Migrationen oben.
 datas += [(str(assets_dir / "icon.svg"), "fritz_callhistory/assets")]
+# version.py liest die Version über importlib.metadata - ohne die kopierten Paket-Metadaten
+# kennt die gefrorene App ihre Version nicht (Über-Dialog zeigt 0.0.0).
+datas += copy_metadata("fritz-callhistory")
 
 a = Analysis(  # noqa: F821
     [str(project_root / "packaging" / "entry_point.py")],

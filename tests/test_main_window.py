@@ -1412,3 +1412,37 @@ def test_focus_search_shortcut_on_voicemail_tab_does_nothing_and_does_not_raise(
     window._focus_search_shortcut_ctrl_f.activated.emit()
 
     assert not window._calls_tab.all_calls_view._search_edit.hasFocus()
+
+
+def test_hilfe_menu_has_about_action(qtbot, connection):
+    window = _make_window(connection)
+    qtbot.addWidget(window)
+
+    help_action = next(a for a in window.menuBar().actions() if a.text() == "Hilfe")
+    assert [a.text() for a in help_action.menu().actions()] == ["Über…"]
+
+
+def test_about_dialog_shows_name_version_repo_python_and_qt(qtbot, connection, mocker):
+    import platform
+
+    from PySide6.QtCore import qVersion
+    from PySide6.QtWidgets import QMessageBox
+
+    shown = {}
+
+    def fake_exec(box):
+        shown["text"] = box.text()
+        return 0
+
+    mocker.patch.object(QMessageBox, "exec", fake_exec)
+    window = _make_window(connection)
+    qtbot.addWidget(window)
+
+    window._about_action.trigger()
+
+    text = shown["text"]
+    assert "Fritz Anrufhistorie" in text
+    assert "Version " in text
+    assert "https://github.com/Jonny1797/Fritz.CallMonitor" in text
+    assert f"Python {platform.python_version()}" in text
+    assert f"Qt {qVersion()}" in text

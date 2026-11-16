@@ -24,6 +24,7 @@ from fritz_callhistory import config as config_module
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import ContactRepository
 from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxError
+from fritz_callhistory.gui.about_dialog import show_about_dialog
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.calls_tab import CallsTab
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
@@ -151,6 +152,11 @@ class MainWindow(QMainWindow):
         self._phonebook_menu.addAction(self._phonebook_export_action)
         self._phonebook_menu.addSeparator()
         self._phonebook_menu.addAction(self._phonebook_import_from_box_action)
+
+        self._about_action = QAction("Über…", self)
+        self._about_action.triggered.connect(lambda: show_about_dialog(self))
+        self._help_menu = self.menuBar().addMenu("Hilfe")
+        self._help_menu.addAction(self._about_action)
 
         # Zwei Shortcuts für dieselbe Aktion: "/" ist die vertraute Konvention
         # (GitHub, Slack, ...), landet aber auf einer deutschen Tastatur auf

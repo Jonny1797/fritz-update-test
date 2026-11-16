@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New "Hilfe" menu with "Über…" showing the app name, installed version, repository link and
+  Python/Qt versions.
+
 ### Changed
 
+- The app version is now derived from the git tag (setuptools-scm) instead of `pyproject.toml`;
+  the build backend switched from `uv_build` to setuptools. Builds without git metadata get `0.0.0`.
 - Internal: Background tasks accept any app error with a German message (not only Box errors) and
   can report progress and be cancelled, as groundwork for the app update. No visible change.
 
