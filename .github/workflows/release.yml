@@ -82,10 +82,13 @@ jobs:
           path: artifacts
 
       - name: Create SHA256SUMS
-        working-directory: artifacts
         run: |
-          mv fritz-callhistory-linux-x86_64/fritz-callhistory-linux-x86_64 .
-          mv fritz-callhistory-windows-x86_64.exe/fritz-callhistory-windows-x86_64.exe .
+          # Each artifact lands in a directory of the same name; move the binaries into a
+          # separate directory (mv into "." would clash with that directory).
+          mkdir release
+          mv artifacts/fritz-callhistory-linux-x86_64/fritz-callhistory-linux-x86_64 release/
+          mv artifacts/fritz-callhistory-windows-x86_64.exe/fritz-callhistory-windows-x86_64.exe release/
+          cd release
           sha256sum fritz-callhistory-linux-x86_64 fritz-callhistory-windows-x86_64.exe > SHA256SUMS
           cat SHA256SUMS
 
@@ -95,6 +98,6 @@ jobs:
           name: ${{ github.ref_name }}
           body_path: release_notes.md
           files: |
-            artifacts/fritz-callhistory-linux-x86_64
-            artifacts/fritz-callhistory-windows-x86_64.exe
-            artifacts/SHA256SUMS
+            release/fritz-callhistory-linux-x86_64
+            release/fritz-callhistory-windows-x86_64.exe
+            release/SHA256SUMS
