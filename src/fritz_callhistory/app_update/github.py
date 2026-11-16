@@ -53,3 +53,19 @@ class GitHubReleaseSource:
             )
         except (KeyError, TypeError) as exc:
             raise UpdateError("Unerwartete Antwort von GitHub.") from exc
+
+    def open_download(self, url: str):
+        """Öffnet eine Release-Datei als Byte-Strom; Rückgabe (Strom, Gesamtgröße oder None)."""
+        request = urllib.request.Request(url, headers={"User-Agent": "fritz-callhistory"})
+        try:
+            response = self._opener(request, timeout=TIMEOUT_S)
+        except urllib.error.HTTPError as exc:
+            raise UpdateError(f"Download fehlgeschlagen (HTTP {exc.code}).") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise UpdateError("Zeitüberschreitung beim Download.") from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise UpdateError("Zeitüberschreitung beim Download.") from exc
+            raise UpdateError("Keine Verbindung zu GitHub (Netzwerkfehler).") from exc
+        length = getattr(response, "headers", {}).get("Content-Length")
+        return response, int(length) if length and length.isdigit() else None

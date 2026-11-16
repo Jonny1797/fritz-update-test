@@ -3,7 +3,9 @@ Suche, Detailansicht und Sync-Aktion im Menü (im Hintergrund-Thread)."""
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import subprocess
 
 from PySide6.QtCore import QTimer, QUrl, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence, QShortcut
@@ -24,11 +26,16 @@ from fritz_callhistory import config as config_module
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import ContactRepository
 from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxError
-from fritz_callhistory.app_update import AppUpdater, ReleaseAvailable, UpToDate
+from fritz_callhistory.app_update import (
+    AppUpdater,
+    ReleaseAvailable,
+    RestartPending,
+    UpToDate,
+)
 from fritz_callhistory.errors import AppError
 from fritz_callhistory.gui import update_dialogs
 from fritz_callhistory.gui.about_dialog import show_about_dialog
-from fritz_callhistory.gui.background_tasks import BackgroundTasks
+from fritz_callhistory.gui.background_tasks import BackgroundTasks, CancelHandle
 from fritz_callhistory.gui.calls_tab import CallsTab
 from fritz_callhistory.gui.callmonitor_worker import CallMonitorThread
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
@@ -70,6 +77,7 @@ class MainWindow(QMainWindow):
         self._gateway = gateway
         self._config = config
         self._quit_requested = False
+        self._restart_command: list[str] | None = None
         self._sync_auth_declined = False
         self._last_sync_user_initiated = False
 
@@ -251,6 +259,7 @@ class MainWindow(QMainWindow):
         if self._call_monitor is not None:
             self._call_monitor.wait(2000)
         super().closeEvent(event)
+        self._launch_restart()
 
         # quitOnLastWindowClosed (Qt's impliziter "letztes Fenster zu ->
         # beenden"-Mechanismus) hat sich in der Praxis als nicht zuverlässig
@@ -577,14 +586,73 @@ class MainWindow(QMainWindow):
     def _on_update_checked(self, result: object) -> None:
         if isinstance(result, UpToDate):
             update_dialogs.show_up_to_date(self, result.version)
+        elif isinstance(result, RestartPending):
+            if update_dialogs.ask_restart_pending(self, result.version):
+                self._restart_into_new_version()
         elif isinstance(result, ReleaseAvailable):
-            # Selbst-Update folgt später; bis dahin führt „Jetzt aktualisieren“ zur Release-Seite.
             if result.can_self_update:
-                wants_page = update_dialogs.ask_update_now(self, result)
-            else:
-                wants_page = update_dialogs.ask_open_release_page(self, result)
-            if wants_page:
+                if update_dialogs.ask_update_now(self, result):
+                    self._install_update(result)
+            elif update_dialogs.ask_open_release_page(self, result):
                 QDesktopServices.openUrl(QUrl(result.page_url))
+
+    def _install_update(self, release: ReleaseAvailable) -> None:
+        """Lädt und installiert das Release als Background task mit Fortschrittsdialog."""
+        if self._app_updater is None:
+            return
+        updater = self._app_updater
+        handle = CancelHandle()
+        dialog = update_dialogs.make_progress_dialog(self, release.version)
+        dialog.canceled.connect(handle.cancel)
+
+        def finish() -> None:
+            dialog.canceled.disconnect(handle.cancel)  # close() würde sonst „abbrechen“ melden
+            dialog.close()
+
+        def on_success(_result: object) -> None:
+            finish()
+            if update_dialogs.ask_restart_after_install(self, release.version):
+                self._restart_into_new_version()
+
+        def on_error(error: AppError) -> None:
+            finish()
+            if handle.is_cancelled:
+                self.statusBar().showMessage("Update abgebrochen.", 5000)
+            else:
+                update_dialogs.show_error(self, error.user_message)
+
+        started = self.background_tasks.start(
+            lambda control: updater.install(
+                release, control.report_progress, lambda: control.is_cancelled
+            ),
+            self,
+            on_success,
+            on_error,
+            key="app-update-install",
+            on_progress=lambda value: dialog.setValue(int(value)),  # type: ignore[arg-type]
+            cancel=handle,
+        )
+        if started:
+            dialog.show()
+        else:
+            dialog.deleteLater()
+
+    def _restart_into_new_version(self) -> None:
+        """Beendet über den normalen Quit-Pfad und startet danach die neue Datei."""
+        if self._app_updater is None:
+            return
+        self._restart_command = self._app_updater.restart_command()
+        self._request_quit()
+
+    def _launch_restart(self) -> None:
+        if self._restart_command is None:
+            return
+        command, self._restart_command = self._restart_command, None
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")  # onefile: frisch entpacken
+        try:
+            subprocess.Popen(command, env=env, start_new_session=True, close_fds=True)
+        except OSError:
+            pass  # Neustart ist nur Komfort; der Nutzer kann die App von Hand starten
 
     def _on_update_check_failed(self, error: AppError) -> None:
         update_dialogs.show_error(self, error.user_message)

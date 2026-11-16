@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import urllib.error
@@ -35,6 +36,11 @@ class FakeSource:
         if self._error:
             raise self._error
         return self._release
+
+    def open_download(self, url):
+        self.opened = getattr(self, "opened", []) + [url]
+        data = self.blobs[url]
+        return io.BytesIO(data), len(data)
 
 
 def _updater(tmp_path, source=None, installed="1.1.0", frozen=True, platform="linux"):
@@ -188,3 +194,178 @@ def test_github_adapter_translates_errors_to_german_messages(raised, expected):
 def test_github_adapter_rejects_garbage_response():
     with pytest.raises(UpdateError, match="Unerwartete Antwort"):
         GitHubReleaseSource("x/y", opener=lambda r, timeout: _Response(b"<html>")).latest_release()
+
+
+# --- Installation ---------------------------------------------------------------------------
+
+NEW_BINARY = b"neue-version" * 50_000  # mehrere Chunks
+SUMS_URL = "https://dl.test/sums"
+
+
+def _install_setup(tmp_path, *, sums="ok", binary=NEW_BINARY, platform="linux", name=LINUX_FILE):
+    files = {name: "https://dl.test/bin"}
+    blobs = {"https://dl.test/bin": binary}
+    if sums is not None:
+        digest = hashlib.sha256(NEW_BINARY).hexdigest() if sums == "ok" else "0" * 64
+        files["SHA256SUMS"] = SUMS_URL
+        blobs[SUMS_URL] = f"{'1' * 64}  other-file\n{digest}  {name}\n".encode()
+    source = FakeSource(files=files)
+    source.blobs = blobs
+    running = tmp_path / "meine-app"
+    running.write_bytes(b"alte-version")
+    running.chmod(0o755)
+    updater = AppUpdater(source, "1.1.0", running, frozen=True, platform=platform)
+    return updater, running, source
+
+
+def _names(tmp_path):
+    return sorted(p.name for p in tmp_path.iterdir())
+
+
+def test_install_with_matching_checksum_swaps_files(tmp_path):
+    updater, running, _ = _install_setup(tmp_path)
+    release = updater.check()
+
+    updater.install(release, lambda p: None, lambda: False)
+
+    assert running.read_bytes() == NEW_BINARY
+    assert (tmp_path / "meine-app.old").read_bytes() == b"alte-version"
+    assert _names(tmp_path) == ["meine-app", "meine-app.old"]
+    assert running.stat().st_mode & 0o111  # bleibt ausführbar
+
+
+def test_install_windows_file_name(tmp_path):
+    updater, running, _ = _install_setup(tmp_path, platform="win32", name=WINDOWS_FILE)
+
+    updater.install(updater.check(), lambda p: None, lambda: False)
+
+    assert running.read_bytes() == NEW_BINARY
+
+
+def test_install_checksum_mismatch_refuses_and_leaves_no_new(tmp_path):
+    updater, running, _ = _install_setup(tmp_path, sums="bad")
+
+    with pytest.raises(UpdateError, match="Prüfsumme"):
+        updater.install(updater.check(), lambda p: None, lambda: False)
+
+    assert running.read_bytes() == b"alte-version"
+    assert _names(tmp_path) == ["meine-app"]
+
+
+def test_install_without_sha256sums_refuses_and_leaves_no_new(tmp_path):
+    updater, running, _ = _install_setup(tmp_path, sums=None)
+
+    with pytest.raises(UpdateError, match="SHA256SUMS"):
+        updater.install(updater.check(), lambda p: None, lambda: False)
+
+    assert running.read_bytes() == b"alte-version"
+    assert _names(tmp_path) == ["meine-app"]
+
+
+def test_install_cancel_mid_download_leaves_running_file_and_no_new(tmp_path):
+    updater, running, _ = _install_setup(tmp_path)
+    seen = []
+
+    with pytest.raises(UpdateError, match="abgebrochen"):
+        updater.install(updater.check(), seen.append, lambda: len(seen) >= 2)
+
+    assert running.read_bytes() == b"alte-version"
+    assert _names(tmp_path) == ["meine-app"]
+
+
+def test_install_progress_is_monotonic_and_ends_at_100(tmp_path):
+    updater, _, _ = _install_setup(tmp_path)
+    seen = []
+
+    updater.install(updater.check(), seen.append, lambda: False)
+
+    assert seen == sorted(seen)
+    assert len(set(seen)) > 2
+    assert seen[-1] == 100
+    assert all(0 <= p <= 100 for p in seen)
+
+
+def test_install_download_error_leaves_no_new(tmp_path):
+    updater, running, source = _install_setup(tmp_path)
+    original = source.open_download
+
+    def broken(url):
+        if url == "https://dl.test/bin":
+            raise UpdateError("Keine Verbindung zu GitHub (Netzwerkfehler).")
+        return original(url)
+
+    source.open_download = broken
+
+    with pytest.raises(UpdateError, match="Keine Verbindung"):
+        updater.install(updater.check(), lambda p: None, lambda: False)
+
+    assert _names(tmp_path) == ["meine-app"]
+
+
+def test_install_refuses_release_that_cannot_self_update(tmp_path):
+    updater, _, _ = _install_setup(tmp_path, sums=None)
+    release = _updater(tmp_path, frozen=False).check()  # Fallback-Release
+
+    with pytest.raises(UpdateError):
+        updater.install(release, lambda p: None, lambda: False)
+
+    assert _names(tmp_path) == ["meine-app"]
+
+
+def test_after_install_check_reports_restart_pending_without_new_download(tmp_path):
+    from fritz_callhistory.app_update import RestartPending
+
+    updater, _, source = _install_setup(tmp_path)
+    updater.install(updater.check(), lambda p: None, lambda: False)
+    downloads = len(source.opened)
+
+    assert updater.check() == RestartPending("1.2.0")
+    assert len(source.opened) == downloads
+
+
+def test_restart_command_starts_the_new_file(tmp_path):
+    updater, running, _ = _install_setup(tmp_path)
+
+    assert updater.restart_command() == [str(running)]
+
+
+def test_cleanup_previous_removes_old_file(tmp_path):
+    updater, running, _ = _install_setup(tmp_path)
+    updater.install(updater.check(), lambda p: None, lambda: False)
+    fresh = AppUpdater(FakeSource(), "1.2.0", running, frozen=True, platform="linux")
+
+    fresh.cleanup_previous()
+
+    assert _names(tmp_path) == ["meine-app"]
+
+
+def test_cleanup_previous_without_old_file_is_a_noop(tmp_path):
+    updater, _, _ = _install_setup(tmp_path)
+
+    updater.cleanup_previous()
+
+    assert _names(tmp_path) == ["meine-app"]
+
+
+def test_github_adapter_open_download_returns_stream_and_total_size():
+    class Response(_Response):
+        headers = {"Content-Length": "5"}
+
+    seen = {}
+
+    def opener(request, timeout):
+        seen["url"] = request.full_url
+        return Response(b"hallo")
+
+    stream, total = GitHubReleaseSource("x/y", opener=opener).open_download("https://dl.test/f")
+
+    assert seen["url"] == "https://dl.test/f"
+    assert (stream.read(), total) == (b"hallo", 5)
+
+
+def test_github_adapter_open_download_translates_http_error():
+    def opener(request, timeout):
+        raise urllib.error.HTTPError("u", 404, "nf", {}, None)
+
+    with pytest.raises(UpdateError, match="HTTP 404"):
+        GitHubReleaseSource("x/y", opener=opener).open_download("https://dl.test/f")

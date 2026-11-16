@@ -1533,9 +1533,8 @@ def _stub_box(mocker, clicked_label):
     return seen
 
 
-def test_check_available_shows_versions_notes_and_opens_release_page(qtbot, connection, mocker):
-    seen = _stub_box(mocker, "Jetzt aktualisieren")
-    opened = mocker.patch("fritz_callhistory.gui.main_window.QDesktopServices.openUrl")
+def test_check_available_shows_versions_and_notes(qtbot, connection, mocker):
+    seen = _stub_box(mocker, "Später")
     window = _update_window(qtbot, connection, mocker, FakeAppUpdater(_available()))
 
     _run_check(qtbot, window)
@@ -1543,7 +1542,6 @@ def test_check_available_shows_versions_notes_and_opens_release_page(qtbot, conn
     assert "Version 1.2.0 ist verfügbar (installiert: 1.1.0)" in seen["text"]
     assert seen["details"] == "Neu: Dinge"
     assert {"Jetzt aktualisieren", "Später"} <= set(seen["buttons"])
-    assert opened.call_args.args[0].toString() == "https://example.test/release"
 
 
 def test_check_available_later_does_not_open_page(qtbot, connection, mocker):
@@ -1579,3 +1577,183 @@ def test_check_error_shows_one_line_reason(qtbot, connection, mocker):
     _run_check(qtbot, window)
 
     assert warn.call_args.args[2] == "Keine Verbindung zu GitHub."
+
+
+class FakeInstallingUpdater(FakeAppUpdater):
+    def __init__(self, result, error=None, steps=(50, 100), wait_for_cancel=False):
+        super().__init__(result)
+        self.install_error = error
+        self.steps = steps
+        self.wait_for_cancel = wait_for_cancel
+        self.installed = []
+        self.restart = ["/opt/app/fritz-callhistory"]
+
+    def install(self, release, on_progress, is_cancelled):
+        import time
+
+        from fritz_callhistory.app_update import UpdateError
+
+        if self.wait_for_cancel:
+            for _ in range(1000):  # höchstens ~5 s, damit ein Testfehler nicht hängt
+                if is_cancelled():
+                    break
+                time.sleep(0.005)
+            raise UpdateError("Update abgebrochen.")
+        for step in self.steps:
+            on_progress(step)
+        if self.install_error:
+            raise self.install_error
+        self.installed.append(release.version)
+
+    def restart_command(self):
+        return self.restart
+
+
+def _stub_dialogs(mocker, clicks):
+    """Wie _stub_box, aber „klickt“ je Aufruf den nächsten Button aus *clicks*."""
+    from PySide6.QtWidgets import QMessageBox
+
+    texts = []
+    queue = list(clicks)
+
+    def fake_exec(box):
+        texts.append(box.text())
+        label = queue.pop(0)
+        for b in box.buttons():
+            if b.text() == label:
+                box.clickedButton = lambda b=b: b
+        return 0
+
+    mocker.patch.object(QMessageBox, "exec", fake_exec)
+    return texts
+
+
+def _wait_install(qtbot, window):
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("app-update-install"))
+    qtbot.wait(50)
+
+
+def test_update_installs_and_restart_later_does_not_quit(qtbot, connection, mocker):
+    updater = FakeInstallingUpdater(_available())
+    texts = _stub_dialogs(mocker, ["Jetzt aktualisieren", "Später"])
+    popen = mocker.patch("fritz_callhistory.gui.main_window.subprocess.Popen")
+    window = _update_window(qtbot, connection, mocker, updater)
+
+    _run_check(qtbot, window)
+    _wait_install(qtbot, window)
+
+    assert updater.installed == ["1.2.0"]
+    assert "Version 1.2.0 wurde installiert" in texts[1]
+    popen.assert_not_called()
+    assert window.background_tasks.is_idle()
+
+
+def test_update_progress_dialog_shows_percent_and_has_cancel_button(qtbot, connection, mocker):
+    from PySide6.QtWidgets import QProgressDialog
+
+    values = []
+    original = QProgressDialog.setValue
+
+    def spy(self, value):
+        values.append(value)
+        original(self, value)
+
+    mocker.patch.object(QProgressDialog, "setValue", spy)
+    _stub_dialogs(mocker, ["Jetzt aktualisieren", "Später"])
+    window = _update_window(qtbot, connection, mocker, FakeInstallingUpdater(_available()))
+
+    _run_check(qtbot, window)
+    _wait_install(qtbot, window)
+
+    assert values[-2:] == [50, 100]
+
+
+def test_progress_dialog_has_abbrechen_button_and_percent_range(qtbot, connection, mocker):
+    from PySide6.QtWidgets import QPushButton
+
+    from fritz_callhistory.gui import update_dialogs
+
+    window = _update_window(qtbot, connection, mocker, FakeAppUpdater())
+
+    dialog = update_dialogs.make_progress_dialog(window, "1.2.0")
+    qtbot.addWidget(dialog)
+
+    assert (dialog.minimum(), dialog.maximum()) == (0, 100)
+    assert [b.text() for b in dialog.findChildren(QPushButton)] == ["Abbrechen"]
+
+
+def test_update_cancel_leaves_no_error_and_no_restart_question(qtbot, connection, mocker):
+    from PySide6.QtWidgets import QProgressDialog, QPushButton
+
+    updater = FakeInstallingUpdater(_available(), wait_for_cancel=True)
+    texts = _stub_dialogs(mocker, ["Jetzt aktualisieren"])
+    warn = mocker.patch("fritz_callhistory.gui.update_dialogs.QMessageBox.warning")
+    window = _update_window(qtbot, connection, mocker, updater)
+    shown = []
+    mocker.patch.object(QProgressDialog, "show", lambda self: shown.append(self))
+
+    window._check_update_action.trigger()
+    qtbot.waitUntil(lambda: bool(shown))
+    shown[0].findChild(QPushButton).click()  # Klick auf „Abbrechen“
+    _wait_install(qtbot, window)
+
+    warn.assert_not_called()
+    assert len(texts) == 1
+    assert "abgebrochen" in window.statusBar().currentMessage()
+
+
+def test_update_install_error_shows_reason(qtbot, connection, mocker):
+    from fritz_callhistory.app_update import UpdateError
+
+    updater = FakeInstallingUpdater(
+        _available(), error=UpdateError("Die Prüfsumme der Datei stimmt nicht; Update abgebrochen.")
+    )
+    _stub_dialogs(mocker, ["Jetzt aktualisieren"])
+    warn = mocker.patch("fritz_callhistory.gui.update_dialogs.QMessageBox.warning")
+    window = _update_window(qtbot, connection, mocker, updater)
+
+    _run_check(qtbot, window)
+    _wait_install(qtbot, window)
+
+    assert "Prüfsumme" in warn.call_args.args[2]
+
+
+def test_restart_now_quits_through_normal_path_and_starts_new_file(qtbot, connection, mocker):
+    updater = FakeInstallingUpdater(_available())
+    _stub_dialogs(mocker, ["Jetzt aktualisieren", "Jetzt neu starten"])
+    popen = mocker.patch("fritz_callhistory.gui.main_window.subprocess.Popen")
+    window = _update_window(qtbot, connection, mocker, updater)
+
+    _run_check(qtbot, window)
+    _wait_install(qtbot, window)
+
+    assert window.background_tasks.is_quitting
+    assert popen.call_args.args[0] == ["/opt/app/fritz-callhistory"]
+    assert popen.call_args.kwargs["start_new_session"] is True
+
+
+def test_restart_pending_check_offers_restart_without_second_install(qtbot, connection, mocker):
+    from fritz_callhistory.app_update import RestartPending
+
+    updater = FakeInstallingUpdater(RestartPending("1.2.0"))
+    texts = _stub_dialogs(mocker, ["Später"])
+    popen = mocker.patch("fritz_callhistory.gui.main_window.subprocess.Popen")
+    window = _update_window(qtbot, connection, mocker, updater)
+
+    _run_check(qtbot, window)
+
+    assert texts == ["Version 1.2.0 ist bereits installiert – Neustart ausstehend."]
+    assert updater.installed == []
+    popen.assert_not_called()
+
+
+def test_restart_pending_restart_now_starts_new_file(qtbot, connection, mocker):
+    from fritz_callhistory.app_update import RestartPending
+
+    _stub_dialogs(mocker, ["Jetzt neu starten"])
+    popen = mocker.patch("fritz_callhistory.gui.main_window.subprocess.Popen")
+    window = _update_window(qtbot, connection, mocker, FakeInstallingUpdater(RestartPending("1.2.0")))
+
+    _run_check(qtbot, window)
+
+    assert popen.call_args.args[0] == ["/opt/app/fritz-callhistory"]

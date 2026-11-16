@@ -83,6 +83,7 @@ def main() -> int:
         frozen=frozen,
         platform=sys.platform,
     )
+    app_updater.cleanup_previous()  # `.old` eines früheren Updates entfernen
     window = MainWindow(connection, cfg, gateway, app_updater)
     window.show()
 

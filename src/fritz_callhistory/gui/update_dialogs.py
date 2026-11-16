@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMessageBox, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMessageBox, QProgressDialog, QWidget
 
 from fritz_callhistory.app_update import ReleaseAvailable
 
@@ -44,3 +45,39 @@ def ask_open_release_page(parent: QWidget, release: ReleaseAvailable) -> bool:
     box.addButton("Schließen", QMessageBox.ButtonRole.RejectRole)
     box.exec()
     return box.clickedButton() is open_page
+
+
+def make_progress_dialog(parent: QWidget, version: str) -> QProgressDialog:
+    """Modaler Fortschrittsdialog (Prozent) mit „Abbrechen“; kein Auto-Schließen."""
+    dialog = QProgressDialog(f"Version {version} wird heruntergeladen …", "Abbrechen", 0, 100, parent)
+    dialog.setWindowTitle(TITLE)
+    dialog.setWindowModality(Qt.WindowModality.WindowModal)
+    dialog.setMinimumDuration(0)
+    dialog.setAutoClose(False)
+    dialog.setAutoReset(False)
+    dialog.setValue(0)
+    return dialog
+
+
+def ask_restart_now(parent: QWidget, text: str) -> bool:
+    """Neustart-Wahl; True bei „Jetzt neu starten“."""
+    box = QMessageBox(parent)
+    box.setWindowTitle(TITLE)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setText(text)
+    restart = box.addButton("Jetzt neu starten", QMessageBox.ButtonRole.AcceptRole)
+    box.addButton("Später", QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+    return box.clickedButton() is restart
+
+
+def ask_restart_after_install(parent: QWidget, version: str) -> bool:
+    return ask_restart_now(
+        parent, f"Version {version} wurde installiert. Jetzt neu starten, um sie zu verwenden?"
+    )
+
+
+def ask_restart_pending(parent: QWidget, version: str) -> bool:
+    return ask_restart_now(
+        parent, f"Version {version} ist bereits installiert – Neustart ausstehend."
+    )

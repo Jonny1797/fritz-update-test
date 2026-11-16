@@ -10,8 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - "Hilfe → Nach Updates suchen…" checks GitHub for a newer Release (only when triggered) and shows
-  the release notes; "Jetzt aktualisieren" currently opens the release page, with the reason shown
-  when the app cannot update itself.
+  the release notes. "Jetzt aktualisieren" downloads the matching file with a cancellable progress
+  dialog, verifies it against the Release's `SHA256SUMS`, swaps it in place of the running file and
+  offers "Jetzt neu starten" / "Später"; a later check reports "Neustart ausstehend" instead of
+  downloading again. The previous file is kept as `.old` and removed on the next start. When the app
+  cannot update itself (running from source, folder not writable, unsupported OS, no matching file)
+  the reason is shown and the release page opens instead. Only Releases after the first one
+  shipping this feature can be installed via the menu.
 - New "Hilfe" menu with "Über…" showing the app name, installed version, repository link and
   Python/Qt versions.
 
