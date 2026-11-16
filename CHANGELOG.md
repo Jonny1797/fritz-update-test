@@ -71,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   safely re-runnable, so a batch left uncommitted by a hard kill mid-sync is
   simply re-fetched on the next run.
 
+## [0.9.11] - 2026-11-16
+
+- Update test: non-modal download dialog (new side).
+
 ## [0.9.10] - 2026-11-16
 
 - Update test: non-modal download dialog (old side).
