@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Release pipeline: the build fails if the built version differs from the tag, and every Release
+  publishes a `SHA256SUMS` file (also mirrored to Forgejo).
 - The app version is now derived from the git tag (setuptools-scm) instead of `pyproject.toml`;
   the build backend switched from `uv_build` to setuptools. Builds without git metadata get `0.0.0`.
 - Internal: Background tasks accept any app error with a German message (not only Box errors) and
