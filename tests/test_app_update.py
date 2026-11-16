@@ -450,3 +450,37 @@ def test_github_adapter_open_download_translates_http_error():
 
     with pytest.raises(UpdateError, match="HTTP 404"):
         GitHubReleaseSource("x/y", opener=opener).open_download("https://dl.test/f")
+
+
+# --- Release-Repo-Override (nur für manuelle Update-Tests) ------------------------------------
+
+
+def test_release_repo_defaults_to_the_real_repo():
+    from fritz_callhistory.app_update.github import release_repo
+    from fritz_callhistory.version import REPO
+
+    assert release_repo({}) == REPO
+    assert release_repo({"FRITZ_UPDATE_REPO": "  "}) == REPO
+
+
+def test_release_repo_env_override_points_the_adapter_at_another_repo(monkeypatch):
+    requested = []
+
+    def opener(request, timeout):
+        requested.append(request.full_url)
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setenv("FRITZ_UPDATE_REPO", "someone/update-test")
+    source = GitHubReleaseSource(opener=opener)
+
+    with pytest.raises(UpdateError):
+        source.latest_release()
+
+    assert source.repo == "someone/update-test"
+    assert requested == ["https://api.github.com/repos/someone/update-test/releases/latest"]
+
+
+def test_explicit_repo_wins_over_env_override(monkeypatch):
+    monkeypatch.setenv("FRITZ_UPDATE_REPO", "someone/update-test")
+
+    assert GitHubReleaseSource("x/y").repo == "x/y"

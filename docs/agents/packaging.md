@@ -15,3 +15,6 @@ uv run pyinstaller packaging/fritz_callhistory.spec   # onefile build into dist/
 ## Release assets and `SHA256SUMS`
 
 The GitHub release workflow checks out with full history and tags (setuptools-scm) and fails the build if the built version differs from the tag. The release job publishes `SHA256SUMS` (`sha256sum` format, both binaries by their release file names) next to the binaries; the Forgejo workflow waits for and mirrors it. The App update verifies downloads against this file.
+
+Testing a release and the App update end to end (throwaway GitHub repo, `FRITZ_UPDATE_REPO`
+override, no test tags on the real repo): [docs/testing/app-update.md](../testing/app-update.md).

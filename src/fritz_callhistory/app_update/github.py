@@ -4,20 +4,32 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import socket
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from fritz_callhistory.app_update.updater import ReleaseInfo, UpdateError
 from fritz_callhistory.version import REPO
 
 TIMEOUT_S = 15
 
+# Nur für Tests des App-Updates: anderes GitHub-Repo (<owner>/<repo>) als Release-Quelle,
+# siehe docs/testing/app-update.md. Leer oder nicht gesetzt = das echte Repo.
+REPO_ENV = "FRITZ_UPDATE_REPO"
+
+
+def release_repo(environ: Mapping[str, str] | None = None) -> str:
+    """GitHub-Repo der Releases; die Umgebungsvariable REPO_ENV überschreibt REPO."""
+    environ = os.environ if environ is None else environ
+    return environ.get(REPO_ENV, "").strip() or REPO
+
 
 class GitHubReleaseSource:
-    def __init__(self, repo: str = REPO, opener: Callable | None = None) -> None:
-        self._url = f"https://api.github.com/repos/{repo}/releases/latest"
+    def __init__(self, repo: str | None = None, opener: Callable | None = None) -> None:
+        self.repo = repo or release_repo()
+        self._url = f"https://api.github.com/repos/{self.repo}/releases/latest"
         self._opener = opener or urllib.request.urlopen
 
     def _open(self, request: urllib.request.Request, *, http_error: str, timeout_error: str):
