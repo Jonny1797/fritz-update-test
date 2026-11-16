@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the release notes. "Jetzt aktualisieren" downloads the matching file with a cancellable progress
   dialog, verifies it against the Release's `SHA256SUMS`, swaps it in place of the running file and
   offers "Jetzt neu starten" / "Später"; a later check reports "Neustart ausstehend" instead of
-  downloading again. The previous file is kept as `.old` and removed on the next start. When the app
+  downloading again. Quitting the app during the download cancels it. The previous file is kept as
+  `.old` and removed on the next start, together with any leftover `.new` from an aborted download
+  (on Windows with retries while the old process still holds `.old`). When the app
   cannot update itself (running from source, folder not writable, unsupported OS, no matching file)
   the reason is shown and the release page opens instead. Only Releases after the first one
   shipping this feature can be installed via the menu.

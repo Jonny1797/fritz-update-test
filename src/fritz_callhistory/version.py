@@ -5,7 +5,9 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 
 PACKAGE_NAME = "fritz-callhistory"
-REPO_URL = "https://github.com/Jonny1797/Fritz.CallMonitor"
+APP_NAME = "Fritz!Box Anrufhistorie"  # Anzeigename (Fenstertitel, Dialoge)
+REPO = "Jonny1797/Fritz.CallMonitor"  # GitHub-Repo der Releases
+REPO_URL = f"https://github.com/{REPO}"
 
 
 def installed_version() -> str:

@@ -30,6 +30,7 @@ from fritz_callhistory.app_update import (
     AppUpdater,
     ReleaseAvailable,
     RestartPending,
+    UpdateCancelled,
     UpToDate,
 )
 from fritz_callhistory.errors import AppError
@@ -48,6 +49,7 @@ from fritz_callhistory.gui.voicemail_view import VoicemailView
 from fritz_callhistory.sync.box_gateway import BoxGateway
 from fritz_callhistory.sync.caller_directory import CallerDirectory
 from fritz_callhistory.sync.normalize import format_number_display
+from fritz_callhistory.version import APP_NAME
 
 # Letzte Absicherung für closeEvent(): Sync und Box-Import haben
 # in fritz/client.py zwar ein Netzwerk-Timeout, das deckt aber z.B. keinen
@@ -67,7 +69,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self._app_updater = app_updater
-        self.setWindowTitle("Fritz!Box Anrufhistorie")
+        self.setWindowTitle(APP_NAME)
         self.resize(900, 600)
 
         # Besitzer aller einmaligen Hintergrundaufgaben (Sync, Wählen, Beenden-Ablauf).
@@ -78,6 +80,8 @@ class MainWindow(QMainWindow):
         self._config = config
         self._quit_requested = False
         self._restart_command: list[str] | None = None
+        # Abbruch-Griff einer laufenden Update-Installation; beim Beenden wird abgebrochen.
+        self._update_install_cancel: CancelHandle | None = None
         self._sync_auth_declined = False
         self._last_sync_user_initiated = False
 
@@ -200,7 +204,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._trigger_sync)
 
         self._tray_icon = QSystemTrayIcon(app_icon(), self)
-        self._tray_icon.setToolTip("Fritz!Box Anrufhistorie")
+        self._tray_icon.setToolTip(APP_NAME)
 
         self._tray_menu = QMenu(self)
         self._tray_show_action = QAction("Anzeigen", self)
@@ -242,6 +246,9 @@ class MainWindow(QMainWindow):
         if not self.background_tasks.is_quitting:
             if self._call_monitor is not None:
                 self._call_monitor.stop()
+            # Laufenden Update-Download abbrechen, statt auf den Failsafe zu warten.
+            if self._update_install_cancel is not None:
+                self._update_install_cancel.cancel()
             # Ab jetzt starten keine Hintergrundaufgaben mehr, ihre Callbacks entfallen.
             self.background_tasks.begin_quit()
 
@@ -606,6 +613,7 @@ class MainWindow(QMainWindow):
         dialog.canceled.connect(handle.cancel)
 
         def finish() -> None:
+            self._update_install_cancel = None
             dialog.canceled.disconnect(handle.cancel)  # close() würde sonst „abbrechen“ melden
             dialog.close()
 
@@ -616,7 +624,7 @@ class MainWindow(QMainWindow):
 
         def on_error(error: AppError) -> None:
             finish()
-            if handle.is_cancelled:
+            if isinstance(error, UpdateCancelled):
                 self.statusBar().showMessage("Update abgebrochen.", 5000)
             else:
                 update_dialogs.show_error(self, error.user_message)
@@ -633,6 +641,7 @@ class MainWindow(QMainWindow):
             cancel=handle,
         )
         if started:
+            self._update_install_cancel = handle
             dialog.show()
         else:
             dialog.deleteLater()

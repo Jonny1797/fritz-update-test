@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import socket
 import urllib.error
@@ -9,15 +10,34 @@ import urllib.request
 from collections.abc import Callable
 
 from fritz_callhistory.app_update.updater import ReleaseInfo, UpdateError
+from fritz_callhistory.version import REPO
 
-DEFAULT_REPO = "Jonny1797/Fritz.CallMonitor"
 TIMEOUT_S = 15
 
 
 class GitHubReleaseSource:
-    def __init__(self, repo: str = DEFAULT_REPO, opener: Callable | None = None) -> None:
+    def __init__(self, repo: str = REPO, opener: Callable | None = None) -> None:
         self._url = f"https://api.github.com/repos/{repo}/releases/latest"
         self._opener = opener or urllib.request.urlopen
+
+    def _open(self, request: urllib.request.Request, *, http_error: str, timeout_error: str):
+        """Öffnet *request* und übersetzt Netzwerkfehler in UpdateError (deutsche Meldung).
+
+        *http_error* wird mit `code=` formatiert."""
+        try:
+            return self._opener(request, timeout=TIMEOUT_S)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (403, 429):
+                raise UpdateError(
+                    "GitHub hat die Anfrage abgelehnt (Rate-Limit). Bitte später erneut versuchen."
+                ) from exc
+            raise UpdateError(http_error.format(code=exc.code)) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise UpdateError(timeout_error) from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise UpdateError(timeout_error) from exc
+            raise UpdateError("Keine Verbindung zu GitHub (Netzwerkfehler).") from exc
 
     def latest_release(self) -> ReleaseInfo:
         request = urllib.request.Request(
@@ -27,22 +47,15 @@ class GitHubReleaseSource:
                 "User-Agent": "fritz-callhistory",
             },
         )
+        response = self._open(
+            request,
+            http_error="GitHub-Fehler (HTTP {code}).",
+            timeout_error="Zeitüberschreitung bei der Verbindung zu GitHub.",
+        )
         try:
-            with self._opener(request, timeout=TIMEOUT_S) as response:
+            with response:
                 data = json.load(response)
-        except urllib.error.HTTPError as exc:
-            if exc.code in (403, 429):
-                raise UpdateError(
-                    "GitHub hat die Anfrage abgelehnt (Rate-Limit). Bitte später erneut versuchen."
-                ) from exc
-            raise UpdateError(f"GitHub-Fehler (HTTP {exc.code}).") from exc
-        except (TimeoutError, socket.timeout) as exc:
-            raise UpdateError("Zeitüberschreitung bei der Verbindung zu GitHub.") from exc
-        except urllib.error.URLError as exc:
-            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
-                raise UpdateError("Zeitüberschreitung bei der Verbindung zu GitHub.") from exc
-            raise UpdateError("Keine Verbindung zu GitHub (Netzwerkfehler).") from exc
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, http.client.HTTPException) as exc:
             raise UpdateError("Unerwartete Antwort von GitHub.") from exc
         try:
             return ReleaseInfo(
@@ -57,15 +70,10 @@ class GitHubReleaseSource:
     def open_download(self, url: str):
         """Öffnet eine Release-Datei als Byte-Strom; Rückgabe (Strom, Gesamtgröße oder None)."""
         request = urllib.request.Request(url, headers={"User-Agent": "fritz-callhistory"})
-        try:
-            response = self._opener(request, timeout=TIMEOUT_S)
-        except urllib.error.HTTPError as exc:
-            raise UpdateError(f"Download fehlgeschlagen (HTTP {exc.code}).") from exc
-        except (TimeoutError, socket.timeout) as exc:
-            raise UpdateError("Zeitüberschreitung beim Download.") from exc
-        except urllib.error.URLError as exc:
-            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
-                raise UpdateError("Zeitüberschreitung beim Download.") from exc
-            raise UpdateError("Keine Verbindung zu GitHub (Netzwerkfehler).") from exc
+        response = self._open(
+            request,
+            http_error="Download fehlgeschlagen (HTTP {code}).",
+            timeout_error="Zeitüberschreitung beim Download.",
+        )
         length = getattr(response, "headers", {}).get("Content-Length")
         return response, int(length) if length and length.isdigit() else None

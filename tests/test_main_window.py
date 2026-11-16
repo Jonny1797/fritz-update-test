@@ -1441,7 +1441,7 @@ def test_about_dialog_shows_name_version_repo_python_and_qt(qtbot, connection, m
     window._about_action.trigger()
 
     text = shown["text"]
-    assert "Fritz Anrufhistorie" in text
+    assert "Fritz!Box Anrufhistorie" in text
     assert "Version " in text
     assert "https://github.com/Jonny1797/Fritz.CallMonitor" in text
     assert f"Python {platform.python_version()}" in text
@@ -1511,7 +1511,7 @@ def test_check_up_to_date_shows_message(qtbot, connection, mocker):
 
     _run_check(qtbot, window)
 
-    assert "Fritz Anrufhistorie ist aktuell (1.1.0)" in info.call_args.args[2]
+    assert "Fritz!Box Anrufhistorie ist aktuell (1.1.0)" in info.call_args.args[2]
 
 
 def _stub_box(mocker, clicked_label):
@@ -1585,20 +1585,22 @@ class FakeInstallingUpdater(FakeAppUpdater):
         self.install_error = error
         self.steps = steps
         self.wait_for_cancel = wait_for_cancel
+        self.saw_cancel = False
         self.installed = []
         self.restart = ["/opt/app/fritz-callhistory"]
 
     def install(self, release, on_progress, is_cancelled):
         import time
 
-        from fritz_callhistory.app_update import UpdateError
+        from fritz_callhistory.app_update import UpdateCancelled
 
         if self.wait_for_cancel:
             for _ in range(1000):  # höchstens ~5 s, damit ein Testfehler nicht hängt
                 if is_cancelled():
+                    self.saw_cancel = True
                     break
                 time.sleep(0.005)
-            raise UpdateError("Update abgebrochen.")
+            raise self.install_error or UpdateCancelled()
         for step in self.steps:
             on_progress(step)
         if self.install_error:
@@ -1700,6 +1702,48 @@ def test_update_cancel_leaves_no_error_and_no_restart_question(qtbot, connection
     warn.assert_not_called()
     assert len(texts) == 1
     assert "abgebrochen" in window.statusBar().currentMessage()
+
+
+def test_update_real_error_after_cancel_click_is_still_shown(qtbot, connection, mocker):
+    from PySide6.QtWidgets import QProgressDialog, QPushButton
+
+    from fritz_callhistory.app_update import UpdateError
+
+    updater = FakeInstallingUpdater(
+        _available(),
+        error=UpdateError("Die App-Datei konnte nicht ersetzt werden: gesperrt"),
+        wait_for_cancel=True,
+    )
+    _stub_dialogs(mocker, ["Jetzt aktualisieren"])
+    warn = mocker.patch("fritz_callhistory.gui.update_dialogs.QMessageBox.warning")
+    window = _update_window(qtbot, connection, mocker, updater)
+    shown = []
+    mocker.patch.object(QProgressDialog, "show", lambda self: shown.append(self))
+
+    window._check_update_action.trigger()
+    qtbot.waitUntil(lambda: bool(shown))
+    shown[0].findChild(QPushButton).click()
+    _wait_install(qtbot, window)
+
+    assert "nicht ersetzt werden" in warn.call_args.args[2]
+
+
+def test_quit_during_update_download_cancels_the_install(qtbot, connection, mocker):
+    from PySide6.QtWidgets import QProgressDialog
+
+    updater = FakeInstallingUpdater(_available(), wait_for_cancel=True)
+    _stub_dialogs(mocker, ["Jetzt aktualisieren"])
+    window = _update_window(qtbot, connection, mocker, updater)
+    shown = []
+    mocker.patch.object(QProgressDialog, "show", lambda self: shown.append(self))
+
+    window._check_update_action.trigger()
+    qtbot.waitUntil(lambda: bool(shown))
+    window._request_quit()
+    _wait_install(qtbot, window)
+
+    assert updater.saw_cancel
+    assert window.background_tasks.is_idle()
 
 
 def test_update_install_error_shows_reason(qtbot, connection, mocker):

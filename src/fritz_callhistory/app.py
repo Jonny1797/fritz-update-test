@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, QTimer
@@ -83,7 +84,11 @@ def main() -> int:
         frozen=frozen,
         platform=sys.platform,
     )
-    app_updater.cleanup_previous()  # `.old` eines früheren Updates entfernen
+    # Reste früherer Updates entfernen; im Hintergrund, weil unter Windows mehrere Versuche
+    # nötig sein können (alter Prozess sperrt `.old` noch kurz). Reine Dateioperation, kein Qt.
+    threading.Thread(
+        target=app_updater.cleanup_previous, name="app-update-cleanup", daemon=True
+    ).start()
     window = MainWindow(connection, cfg, gateway, app_updater)
     window.show()
 

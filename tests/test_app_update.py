@@ -14,6 +14,8 @@ from fritz_callhistory.app_update import (
     GitHubReleaseSource,
     ReleaseAvailable,
     ReleaseInfo,
+    RestartPending,
+    UpdateCancelled,
     UpdateError,
     UpToDate,
 )
@@ -273,6 +275,42 @@ def test_install_cancel_mid_download_leaves_running_file_and_no_new(tmp_path):
     assert _names(tmp_path) == ["meine-app"]
 
 
+def test_install_cancel_after_last_chunk_does_not_swap(tmp_path):
+    updater, running, _ = _install_setup(tmp_path)
+    seen = []
+
+    with pytest.raises(UpdateCancelled):
+        updater.install(updater.check(), seen.append, lambda: 100 in seen)
+
+    assert running.read_bytes() == b"alte-version"
+    assert _names(tmp_path) == ["meine-app"]
+    assert updater.check() != RestartPending("1.2.0")
+
+
+def test_install_connection_break_mid_download_is_a_german_update_error(tmp_path):
+    import http.client
+
+    updater, running, source = _install_setup(tmp_path)
+    original = source.open_download
+
+    class Breaking(io.BytesIO):
+        def read(self, size=-1):
+            raise http.client.IncompleteRead(b"teil", 100)
+
+    def breaking(url):
+        if url == "https://dl.test/bin":
+            return Breaking(), 1000
+        return original(url)
+
+    source.open_download = breaking
+
+    with pytest.raises(UpdateError, match="Verbindung wurde unterbrochen") as info:
+        updater.install(updater.check(), lambda p: None, lambda: False)
+
+    assert not isinstance(info.value, UpdateCancelled)
+    assert _names(tmp_path) == ["meine-app"]
+
+
 def test_install_progress_is_monotonic_and_ends_at_100(tmp_path):
     updater, _, _ = _install_setup(tmp_path)
     seen = []
@@ -337,6 +375,49 @@ def test_cleanup_previous_removes_old_file(tmp_path):
     fresh.cleanup_previous()
 
     assert _names(tmp_path) == ["meine-app"]
+
+
+def test_cleanup_previous_removes_leftover_new_file(tmp_path):
+    updater, _, _ = _install_setup(tmp_path)
+    (tmp_path / "meine-app.new").write_bytes(b"halb")
+
+    updater.cleanup_previous()
+
+    assert _names(tmp_path) == ["meine-app"]
+
+
+def test_cleanup_previous_retries_while_old_file_is_locked(tmp_path, mocker):
+    from pathlib import Path
+
+    updater, _, _ = _install_setup(tmp_path)
+    old = tmp_path / "meine-app.old"
+    old.write_bytes(b"alt")
+    original_unlink = Path.unlink
+    locked = {"left": 3}
+
+    def unlink(self, missing_ok=False):
+        if self == old and locked["left"]:
+            locked["left"] -= 1
+            raise PermissionError("gesperrt")
+        original_unlink(self, missing_ok=missing_ok)
+
+    mocker.patch.object(Path, "unlink", unlink)
+
+    updater.cleanup_previous(attempts=5, delay_s=0)
+
+    assert _names(tmp_path) == ["meine-app"]
+
+
+def test_cleanup_previous_gives_up_quietly_after_all_attempts(tmp_path, mocker):
+    from pathlib import Path
+
+    updater, _, _ = _install_setup(tmp_path)
+    (tmp_path / "meine-app.old").write_bytes(b"alt")
+    mocker.patch.object(Path, "unlink", side_effect=PermissionError("gesperrt"))
+
+    updater.cleanup_previous(attempts=3, delay_s=0)
+
+    assert _names(tmp_path) == ["meine-app", "meine-app.old"]
 
 
 def test_cleanup_previous_without_old_file_is_a_noop(tmp_path):

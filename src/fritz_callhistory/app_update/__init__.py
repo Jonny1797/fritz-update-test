@@ -8,6 +8,7 @@ from fritz_callhistory.app_update.updater import (
     ReleaseInfo,
     ReleaseSource,
     RestartPending,
+    UpdateCancelled,
     UpdateError,
     UpToDate,
 )
@@ -21,5 +22,6 @@ __all__ = [
     "ReleaseSource",
     "RestartPending",
     "UpToDate",
+    "UpdateCancelled",
     "UpdateError",
 ]

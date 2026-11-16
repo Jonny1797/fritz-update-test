@@ -7,9 +7,7 @@ import platform
 import PySide6
 from PySide6.QtWidgets import QMessageBox, QWidget
 
-from fritz_callhistory.version import REPO_URL, installed_version
-
-APP_NAME = "Fritz Anrufhistorie"
+from fritz_callhistory.version import APP_NAME, REPO_URL, installed_version
 
 
 def about_text() -> str:

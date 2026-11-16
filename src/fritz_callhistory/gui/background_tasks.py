@@ -126,10 +126,9 @@ class BackgroundTasks(QObject):
             thread = _TaskThread(fn)
         else:
             handle = cancel or CancelHandle()
-            holder: list[_TaskThread] = []
-            control = TaskControl(lambda v: holder[0].progress.emit(v), handle)
+            # Der Lambda-Körper liest `thread` erst beim Aufruf, also nach der Zuweisung unten.
+            control = TaskControl(lambda v: thread.progress.emit(v), handle)
             thread = _TaskThread(lambda: fn(control))  # type: ignore[call-arg]
-            holder.append(thread)
         task = _Task(thread, key, context, on_success, on_error, on_progress)
         thread.progress.connect(lambda v, t=task: self._on_progress(t, v))
         self._tasks.append(task)
