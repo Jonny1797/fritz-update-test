@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Internal: Background tasks accept any app error with a German message (not only Box errors) and
+  can report progress and be cancelled, as groundwork for the app update. No visible change.
+
 ### Fixed
 
 - A live call that ended without ever being answered now shows as "Verpasst" (highlighted

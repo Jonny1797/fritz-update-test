@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from fritz_callhistory.errors import AppError
 
-class FritzBoxError(Exception):
+
+class FritzBoxError(AppError):
     """Basisklasse für Fehler beim Zugriff auf die Fritz!Box."""
 
 

@@ -3,16 +3,48 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
 import shiboken6
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
+from fritz_callhistory.errors import AppError
 from fritz_callhistory.fritz.exceptions import FritzBoxError
 
 # Sekunden, die nach Beginn des Beendens auf laufende Aufgaben gewartet wird.
 DEFAULT_FAILSAFE_TIMEOUT_S = 10.0
+
+
+class CancelHandle:
+    """Abbruch-Griff: der Starter ruft cancel(), die Aufgabe fragt is_cancelled."""
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+
+    def cancel(self) -> None:
+        self._event.set()
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._event.is_set()
+
+
+class TaskControl:
+    """Wird der Aufgabenfunktion übergeben, wenn Fortschritt oder Abbruch genutzt wird."""
+
+    def __init__(self, report: Callable[[object], None], cancel: CancelHandle) -> None:
+        self._report = report
+        self._cancel = cancel
+
+    def report_progress(self, value: object) -> None:
+        """Meldet Fortschritt; der Fortschritts-Callback läuft im GUI-Thread."""
+        self._report(value)
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancel.is_cancelled
 
 
 class _TaskThread(QThread):
@@ -20,16 +52,18 @@ class _TaskThread(QThread):
 
     Der Aufrufer wertet beides erst im finished-Signal (GUI-Thread) aus."""
 
+    progress = Signal(object)
+
     def __init__(self, fn: Callable[[], object], parent=None) -> None:
         super().__init__(parent)
         self._fn = fn
         self.result: object = None
-        self.error: FritzBoxError | None = None
+        self.error: AppError | None = None
 
     def run(self) -> None:
         try:
             self.result = self._fn()
-        except FritzBoxError as exc:
+        except AppError as exc:
             self.error = exc
         except Exception as exc:  # Thread darf nie stillschweigend sterben
             self.error = FritzBoxError(f"Unerwarteter Fehler: {exc}")
@@ -41,7 +75,8 @@ class _Task:
     key: str | None
     context: QObject
     on_success: Callable[[object], None]
-    on_error: Callable[[FritzBoxError], None]
+    on_error: Callable[[AppError], None]
+    on_progress: Callable[[object], None] | None = None
 
 
 class BackgroundTasks(QObject):
@@ -70,17 +105,33 @@ class BackgroundTasks(QObject):
         fn: Callable[[], object],
         context: QObject,
         on_success: Callable[[object], None],
-        on_error: Callable[[FritzBoxError], None],
+        on_error: Callable[[AppError], None],
         key: str | None = None,
+        *,
+        on_progress: Callable[[object], None] | None = None,
+        cancel: CancelHandle | None = None,
     ) -> bool:
         """Startet *fn* im Hintergrund. Gibt False zurück, wenn der Start abgelehnt wurde
-        (Schlüssel läuft schon oder die App wird beendet) - dann wird nichts aufgerufen."""
+        (Schlüssel läuft schon oder die App wird beendet) - dann wird nichts aufgerufen.
+
+        Mit *on_progress* und/oder *cancel* wird *fn* mit einem `TaskControl` aufgerufen
+        (Fortschritt melden, Abbruch abfragen), sonst ohne Argument. *on_progress* läuft im
+        GUI-Thread; ein abgebrochener Lauf endet wie jeder andere (fn entscheidet, ob sie
+        einen Fehler wirft)."""
         if self._quitting:
             return False
         if key is not None and self.is_running(key):
             return False
-        thread = _TaskThread(fn)
-        task = _Task(thread, key, context, on_success, on_error)
+        if on_progress is None and cancel is None:
+            thread = _TaskThread(fn)
+        else:
+            handle = cancel or CancelHandle()
+            holder: list[_TaskThread] = []
+            control = TaskControl(lambda v: holder[0].progress.emit(v), handle)
+            thread = _TaskThread(lambda: fn(control))  # type: ignore[call-arg]
+            holder.append(thread)
+        task = _Task(thread, key, context, on_success, on_error, on_progress)
+        thread.progress.connect(lambda v, t=task: self._on_progress(t, v))
         self._tasks.append(task)
         thread.finished.connect(lambda t=task: self._on_thread_finished(t))
         thread.start()
@@ -102,6 +153,14 @@ class BackgroundTasks(QObject):
         self._quitting = True
         if self._tasks:
             self._failsafe.start()
+
+    def _on_progress(self, task: _Task, value: object) -> None:
+        if (
+            task.on_progress is not None
+            and not self._quitting
+            and shiboken6.isValid(task.context)
+        ):
+            task.on_progress(value)
 
     def _on_thread_finished(self, task: _Task) -> None:
         # Erst aus der Liste entfernen, damit is_running() in den Callbacks False ist.

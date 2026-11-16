@@ -166,3 +166,80 @@ def test_exit_fn_not_called_when_tasks_end_in_time(qtbot):
         release.set()
     qtbot.wait(400)
     assert calls == []
+
+
+def test_non_box_app_error_reaches_on_error_with_own_message(qtbot, tasks):
+    from fritz_callhistory.errors import AppError
+
+    class UpdateError(AppError):
+        pass
+
+    ctx, rec = QObject(), Recorder()
+    original = UpdateError("Prüfsumme stimmt nicht")
+
+    def fn():
+        raise original
+
+    tasks.start(fn, ctx, rec.ok, rec.err)
+    qtbot.waitUntil(lambda: len(rec.errors) == 1, timeout=3000)
+    assert rec.errors[0] is original
+    assert str(rec.errors[0]) == "Prüfsumme stimmt nicht"
+
+
+def test_progress_arrives_in_gui_thread_in_order(qtbot, tasks):
+    ctx, rec = QObject(), Recorder()
+    seen = []
+    task_threads = []
+
+    def fn(control):
+        task_threads.append(threading.get_ident())
+        for pct in (10, 50, 100):
+            control.report_progress(pct)
+        return "fertig"
+
+    def on_progress(value):
+        seen.append((value, threading.get_ident()))
+
+    tasks.start(fn, ctx, rec.ok, rec.err, on_progress=on_progress)
+    qtbot.waitUntil(lambda: rec.successes == ["fertig"], timeout=3000)
+    assert [v for v, _ in seen] == [10, 50, 100]
+    assert {t for _, t in seen} == {threading.get_ident()}
+    assert task_threads[0] != threading.get_ident()
+
+
+def test_cancel_handle_is_visible_to_task(qtbot, tasks):
+    from fritz_callhistory.gui.background_tasks import CancelHandle
+
+    ctx, rec = QObject(), Recorder()
+    handle = CancelHandle()
+    started = threading.Event()
+
+    def fn(control):
+        started.set()
+        while not control.is_cancelled:
+            threading.Event().wait(0.005)
+        return "abgebrochen"
+
+    tasks.start(fn, ctx, rec.ok, rec.err, cancel=handle)
+    assert started.wait(3)
+    handle.cancel()
+    qtbot.waitUntil(lambda: rec.successes == ["abgebrochen"], timeout=3000)
+
+
+def test_cancelled_task_gets_no_callbacks_once_quitting(qtbot, tasks):
+    from fritz_callhistory.gui.background_tasks import CancelHandle
+
+    ctx, rec = QObject(), Recorder()
+    handle = CancelHandle()
+
+    def fn(control):
+        while not control.is_cancelled:
+            threading.Event().wait(0.005)
+        control.report_progress(1)
+        return "x"
+
+    tasks.start(fn, ctx, rec.ok, rec.err, on_progress=rec.ok, cancel=handle)
+    tasks.begin_quit()
+    handle.cancel()
+    qtbot.waitUntil(tasks.is_idle, timeout=3000)
+    assert rec.successes == [] and rec.errors == []
