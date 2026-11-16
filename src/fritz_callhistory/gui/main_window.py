@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtCore import QTimer, QUrl, Qt
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -24,6 +24,9 @@ from fritz_callhistory import config as config_module
 from fritz_callhistory.config import Config
 from fritz_callhistory.db.repository import ContactRepository
 from fritz_callhistory.fritz.exceptions import FritzBoxAuthError, FritzBoxError
+from fritz_callhistory.app_update import AppUpdater, ReleaseAvailable, UpToDate
+from fritz_callhistory.errors import AppError
+from fritz_callhistory.gui import update_dialogs
 from fritz_callhistory.gui.about_dialog import show_about_dialog
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.calls_tab import CallsTab
@@ -53,8 +56,10 @@ class MainWindow(QMainWindow):
         connection: sqlite3.Connection,
         config: Config,
         gateway: BoxGateway,
+        app_updater: AppUpdater | None = None,
     ) -> None:
         super().__init__()
+        self._app_updater = app_updater
         self.setWindowTitle("Fritz!Box Anrufhistorie")
         self.resize(900, 600)
 
@@ -155,7 +160,11 @@ class MainWindow(QMainWindow):
 
         self._about_action = QAction("Über…", self)
         self._about_action.triggered.connect(lambda: show_about_dialog(self))
+        self._check_update_action = QAction("Nach Updates suchen…", self)
+        self._check_update_action.setEnabled(app_updater is not None)
+        self._check_update_action.triggered.connect(self._check_for_updates)
         self._help_menu = self.menuBar().addMenu("Hilfe")
+        self._help_menu.addAction(self._check_update_action)
         self._help_menu.addAction(self._about_action)
 
         # Zwei Shortcuts für dieselbe Aktion: "/" ist die vertraute Konvention
@@ -552,3 +561,30 @@ class MainWindow(QMainWindow):
         if self._show_credentials_dialog():
             self._sync_auth_declined = False
             self.statusBar().showMessage("Zugangsdaten gespeichert.", 5000)
+
+    def _check_for_updates(self) -> None:
+        """Hilfe → Nach Updates suchen…: einzige Stelle, die eine Anfrage an GitHub auslöst."""
+        if self._app_updater is None:
+            return
+        self.background_tasks.start(
+            self._app_updater.check,
+            self,
+            self._on_update_checked,
+            self._on_update_check_failed,
+            key="app-update-check",
+        )
+
+    def _on_update_checked(self, result: object) -> None:
+        if isinstance(result, UpToDate):
+            update_dialogs.show_up_to_date(self, result.version)
+        elif isinstance(result, ReleaseAvailable):
+            # Selbst-Update folgt später; bis dahin führt „Jetzt aktualisieren“ zur Release-Seite.
+            if result.can_self_update:
+                wants_page = update_dialogs.ask_update_now(self, result)
+            else:
+                wants_page = update_dialogs.ask_open_release_page(self, result)
+            if wants_page:
+                QDesktopServices.openUrl(QUrl(result.page_url))
+
+    def _on_update_check_failed(self, error: AppError) -> None:
+        update_dialogs.show_error(self, error.user_message)

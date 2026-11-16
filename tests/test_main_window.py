@@ -1419,7 +1419,7 @@ def test_hilfe_menu_has_about_action(qtbot, connection):
     qtbot.addWidget(window)
 
     help_action = next(a for a in window.menuBar().actions() if a.text() == "Hilfe")
-    assert [a.text() for a in help_action.menu().actions()] == ["Über…"]
+    assert [a.text() for a in help_action.menu().actions()] == ["Nach Updates suchen…", "Über…"]
 
 
 def test_about_dialog_shows_name_version_repo_python_and_qt(qtbot, connection, mocker):
@@ -1446,3 +1446,136 @@ def test_about_dialog_shows_name_version_repo_python_and_qt(qtbot, connection, m
     assert "https://github.com/Jonny1797/Fritz.CallMonitor" in text
     assert f"Python {platform.python_version()}" in text
     assert f"Qt {qVersion()}" in text
+
+
+class FakeAppUpdater:
+    def __init__(self, result=None, error=None):
+        self._result = result
+        self._error = error
+        self.check_count = 0
+
+    def check(self):
+        self.check_count += 1
+        if self._error:
+            raise self._error
+        return self._result
+
+
+def _update_window(qtbot, connection, mocker, updater):
+    from fritz_callhistory.config import Config
+
+    mocker.patch("fritz_callhistory.gui.main_window.QTimer.singleShot")
+    window = MainWindow(connection, Config(address=""), FakeGateway(has_credentials=False), updater)
+    qtbot.addWidget(window)
+    return window
+
+
+def _available(can_self_update=True, reason=None):
+    from fritz_callhistory.app_update import ReleaseAvailable
+
+    return ReleaseAvailable(
+        version="1.2.0",
+        installed="1.1.0",
+        notes="Neu: Dinge",
+        page_url="https://example.test/release",
+        can_self_update=can_self_update,
+        fallback_reason=reason,
+    )
+
+
+def _run_check(qtbot, window):
+    window._check_update_action.trigger()
+    qtbot.waitUntil(lambda: not window.background_tasks.is_running("app-update-check"))
+    qtbot.wait(50)
+
+
+def test_check_update_action_disabled_without_updater(qtbot, connection):
+    window = _make_window(connection)
+    qtbot.addWidget(window)
+
+    assert not window._check_update_action.isEnabled()
+
+
+def test_no_network_check_without_user_action(qtbot, connection, mocker):
+    updater = FakeAppUpdater()
+    _update_window(qtbot, connection, mocker, updater)
+
+    assert updater.check_count == 0
+
+
+def test_check_up_to_date_shows_message(qtbot, connection, mocker):
+    from fritz_callhistory.app_update import UpToDate
+
+    info = mocker.patch("fritz_callhistory.gui.update_dialogs.QMessageBox.information")
+    window = _update_window(qtbot, connection, mocker, FakeAppUpdater(UpToDate("1.1.0")))
+
+    _run_check(qtbot, window)
+
+    assert "Fritz Anrufhistorie ist aktuell (1.1.0)" in info.call_args.args[2]
+
+
+def _stub_box(mocker, clicked_label):
+    """Ersetzt QMessageBox.exec; „klickt“ den Button mit dem Text und liefert die Box."""
+    from PySide6.QtWidgets import QMessageBox
+
+    seen = {}
+
+    def fake_exec(box):
+        seen["text"] = box.text()
+        seen["details"] = box.detailedText()
+        seen["buttons"] = [b.text() for b in box.buttons() if b.text() != "Show Details..."]
+        for b in box.buttons():
+            if b.text() == clicked_label:
+                box.clickedButton = lambda b=b: b
+        return 0
+
+    mocker.patch.object(QMessageBox, "exec", fake_exec)
+    return seen
+
+
+def test_check_available_shows_versions_notes_and_opens_release_page(qtbot, connection, mocker):
+    seen = _stub_box(mocker, "Jetzt aktualisieren")
+    opened = mocker.patch("fritz_callhistory.gui.main_window.QDesktopServices.openUrl")
+    window = _update_window(qtbot, connection, mocker, FakeAppUpdater(_available()))
+
+    _run_check(qtbot, window)
+
+    assert "Version 1.2.0 ist verfügbar (installiert: 1.1.0)" in seen["text"]
+    assert seen["details"] == "Neu: Dinge"
+    assert {"Jetzt aktualisieren", "Später"} <= set(seen["buttons"])
+    assert opened.call_args.args[0].toString() == "https://example.test/release"
+
+
+def test_check_available_later_does_not_open_page(qtbot, connection, mocker):
+    _stub_box(mocker, "Später")
+    opened = mocker.patch("fritz_callhistory.gui.main_window.QDesktopServices.openUrl")
+    window = _update_window(qtbot, connection, mocker, FakeAppUpdater(_available()))
+
+    _run_check(qtbot, window)
+
+    opened.assert_not_called()
+
+
+def test_check_fallback_names_reason_and_opens_release_page(qtbot, connection, mocker):
+    seen = _stub_box(mocker, "Release-Seite öffnen")
+    opened = mocker.patch("fritz_callhistory.gui.main_window.QDesktopServices.openUrl")
+    updater = FakeAppUpdater(_available(False, "Der Ordner der App ist nicht beschreibbar."))
+    window = _update_window(qtbot, connection, mocker, updater)
+
+    _run_check(qtbot, window)
+
+    assert "nicht beschreibbar" in seen["text"]
+    assert opened.call_args.args[0].toString() == "https://example.test/release"
+
+
+def test_check_error_shows_one_line_reason(qtbot, connection, mocker):
+    from fritz_callhistory.app_update import UpdateError
+
+    warn = mocker.patch("fritz_callhistory.gui.update_dialogs.QMessageBox.warning")
+    window = _update_window(
+        qtbot, connection, mocker, FakeAppUpdater(error=UpdateError("Keine Verbindung zu GitHub."))
+    )
+
+    _run_check(qtbot, window)
+
+    assert warn.call_args.args[2] == "Keine Verbindung zu GitHub."

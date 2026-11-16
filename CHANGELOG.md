@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- "Hilfe → Nach Updates suchen…" checks GitHub for a newer Release (only when triggered) and shows
+  the release notes; "Jetzt aktualisieren" currently opens the release page, with the reason shown
+  when the app cannot update itself.
 - New "Hilfe" menu with "Über…" showing the app name, installed version, repository link and
   Python/Qt versions.
 

@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 import signal
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication, QDialog
 
 from fritz_callhistory import config as config_module
+from fritz_callhistory.app_update import AppUpdater, GitHubReleaseSource
 from fritz_callhistory.db.connection import connect
 from fritz_callhistory.gui.background_tasks import BackgroundTasks
 from fritz_callhistory.gui.credentials_dialog import CredentialsDialog
@@ -17,6 +19,7 @@ from fritz_callhistory.gui.icon import app_icon
 from fritz_callhistory.gui.main_window import MainWindow
 from fritz_callhistory.paths import database_file
 from fritz_callhistory.sync.box_gateway import BoxGateway
+from fritz_callhistory.version import installed_version
 
 
 def _handle_sigint(*_args) -> None:
@@ -72,7 +75,15 @@ def main() -> int:
         cfg = _run_first_start_dialog(cfg, gateway)
         gateway.apply_config(cfg)
 
-    window = MainWindow(connection, cfg, gateway)
+    frozen = bool(getattr(sys, "frozen", False))
+    app_updater = AppUpdater(
+        GitHubReleaseSource(),
+        installed_version(),
+        Path(sys.executable if frozen else sys.argv[0]),
+        frozen=frozen,
+        platform=sys.platform,
+    )
+    window = MainWindow(connection, cfg, gateway, app_updater)
     window.show()
 
     # Qt's C++-Eventloop liefert SIGINT erst, wenn wieder Python-Bytecode
