@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QSystemTrayIcon,
     QTabWidget,
     QVBoxLayout,
@@ -80,8 +81,8 @@ class MainWindow(QMainWindow):
         self._config = config
         self._quit_requested = False
         self._restart_command: list[str] | None = None
-        # Abbruch-Griff einer laufenden Update-Installation; beim Beenden wird abgebrochen.
-        self._update_install_cancel: CancelHandle | None = None
+        # Laufende Update-Installation (Abbruch-Griff, Fortschrittsdialog); Beenden bricht ab.
+        self._update_install: tuple[CancelHandle, QProgressDialog] | None = None
         self._sync_auth_declined = False
         self._last_sync_user_initiated = False
 
@@ -247,8 +248,10 @@ class MainWindow(QMainWindow):
             if self._call_monitor is not None:
                 self._call_monitor.stop()
             # Laufenden Update-Download abbrechen, statt auf den Failsafe zu warten.
-            if self._update_install_cancel is not None:
-                self._update_install_cancel.cancel()
+            if self._update_install is not None:
+                handle, progress = self._update_install
+                handle.cancel()
+                progress.close()
             # Ab jetzt starten keine Hintergrundaufgaben mehr, ihre Callbacks entfallen.
             self.background_tasks.begin_quit()
 
@@ -613,7 +616,8 @@ class MainWindow(QMainWindow):
         dialog.canceled.connect(handle.cancel)
 
         def finish() -> None:
-            self._update_install_cancel = None
+            self._update_install = None
+            self._check_update_action.setEnabled(True)
             dialog.canceled.disconnect(handle.cancel)  # close() würde sonst „abbrechen“ melden
             dialog.close()
 
@@ -641,7 +645,9 @@ class MainWindow(QMainWindow):
             cancel=handle,
         )
         if started:
-            self._update_install_cancel = handle
+            self._update_install = (handle, dialog)
+            # Der Dialog ist nicht modal: währenddessen keine zweite Update-Suche anbieten.
+            self._check_update_action.setEnabled(False)
             dialog.show()
         else:
             dialog.deleteLater()

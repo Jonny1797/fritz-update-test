@@ -62,10 +62,13 @@ def ask_open_release_page(parent: QWidget, release: ReleaseAvailable) -> bool:
 
 
 def make_progress_dialog(parent: QWidget, version: str) -> QProgressDialog:
-    """Modaler Fortschrittsdialog (Prozent) mit „Abbrechen“; kein Auto-Schließen."""
+    """Fortschrittsdialog (Prozent) mit „Abbrechen“; kein Auto-Schließen.
+
+    Nicht modal: Hauptfenster und Tray-Menü (Beenden) bleiben bedienbar; Beenden bricht den
+    Download ab (MainWindow.closeEvent)."""
     dialog = QProgressDialog(f"Version {version} wird heruntergeladen …", "Abbrechen", 0, 100, parent)
     dialog.setWindowTitle(TITLE)
-    dialog.setWindowModality(Qt.WindowModality.WindowModal)
+    dialog.setWindowModality(Qt.WindowModality.NonModal)
     dialog.setMinimumDuration(0)
     dialog.setAutoClose(False)
     dialog.setAutoReset(False)

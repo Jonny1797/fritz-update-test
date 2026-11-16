@@ -1729,6 +1729,7 @@ def test_update_real_error_after_cancel_click_is_still_shown(qtbot, connection, 
 
 
 def test_quit_during_update_download_cancels_the_install(qtbot, connection, mocker):
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QProgressDialog
 
     updater = FakeInstallingUpdater(_available(), wait_for_cancel=True)
@@ -1739,11 +1740,33 @@ def test_quit_during_update_download_cancels_the_install(qtbot, connection, mock
 
     window._check_update_action.trigger()
     qtbot.waitUntil(lambda: bool(shown))
-    window._request_quit()
+    # Der Dialog blockiert weder Fenster noch Tray-Menü: „Beenden“ aus dem Tray geht.
+    assert shown[0].windowModality() == Qt.WindowModality.NonModal
+    window._tray_quit_action.trigger()
     _wait_install(qtbot, window)
 
     assert updater.saw_cancel
     assert window.background_tasks.is_idle()
+
+
+def test_no_second_update_check_while_installing(qtbot, connection, mocker):
+    from PySide6.QtWidgets import QProgressDialog, QPushButton
+
+    updater = FakeInstallingUpdater(_available(), wait_for_cancel=True)
+    _stub_dialogs(mocker, ["Jetzt aktualisieren"])
+    window = _update_window(qtbot, connection, mocker, updater)
+    shown = []
+    mocker.patch.object(QProgressDialog, "show", lambda self: shown.append(self))
+
+    window._check_update_action.trigger()
+    qtbot.waitUntil(lambda: bool(shown))
+
+    assert not window._check_update_action.isEnabled()
+
+    shown[0].findChild(QPushButton).click()
+    _wait_install(qtbot, window)
+
+    assert window._check_update_action.isEnabled()
 
 
 def test_update_install_error_shows_reason(qtbot, connection, mocker):

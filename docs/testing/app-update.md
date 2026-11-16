@@ -44,6 +44,9 @@ your local repo, where it would change the setuptools-scm version and could late
 git push updatetest HEAD:refs/tags/0.9.8
 ```
 
+If no Actions run appears for the very first tag push on a brand-new repo (GitHub sometimes misses
+it), delete and re-push the tag: `git push updatetest :refs/tags/0.9.8`, then push it again.
+
 ## 1. Release pipeline (#34)
 
 After the `0.9.8` push, in the test repo's Actions:
@@ -72,8 +75,9 @@ git push updatetest HEAD:refs/tags/0.9.97
 git switch update-test
 ```
 
-- [ ] Both build jobs fail at "Check built version matches the tag"
-      (`Built version 0.0.1 does not match tag 0.9.97`).
+- [ ] The first build job to reach it fails at "Check built version matches the tag"
+      (`Built version 0.0.1 does not match tag 0.9.97`); the other one is cancelled (matrix
+      fail-fast) and the release job is skipped.
 - [ ] There is no Release `0.9.97`. Delete the tag: `git push updatetest :refs/tags/0.9.97`.
 
 **Optional: Forgejo mirror.** On a throwaway Forgejo repo with Actions and a runner, push the test
@@ -150,7 +154,7 @@ gh repo delete Jonny1797/fritz-update-test      # needs the delete_repo scope
 git switch ralph/issue-32-33-34-35-36
 git branch -D update-test update-test-mismatch
 git remote remove updatetest
-git tag -l '0.9.*'                              # must print nothing
+git tag -l 0.9.8 0.9.9 0.9.97                   # must print nothing
 rm -rf ~/update-test
 ```
 
