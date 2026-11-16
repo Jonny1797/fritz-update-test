@@ -71,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   safely re-runnable, so a batch left uncommitted by a hard kill mid-sync is
   simply re-fetched on the next run.
 
+## [0.9.9] - 2026-11-16
+
+- Update test, second release.
+
 ## [0.9.8] - 2026-11-16
 
 - Update test, first release.
